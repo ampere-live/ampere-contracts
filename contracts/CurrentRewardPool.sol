@@ -47,9 +47,9 @@ contract AmpRewardPool {
     // The time when AMP mining ends.
     uint256 public poolEndTime;
 
-    uint256 public ampPerSecond = 0.0011098 ether; // 35000 shares / (365 days * 24h * 60min * 60s)
+    uint256 public ampPerSecond = 0.0025368 ether; // 80000 shares / (365 days * 24h * 60min * 60s)
     uint256 public runningTime = 365 days;
-    uint256 public constant TOTAL_REWARDS = 35000 ether;
+    uint256 public constant TOTAL_REWARDS = 80000 ether;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);

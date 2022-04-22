@@ -12,7 +12,7 @@ contract AmpWrapper {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
-    IERC20 public amp;
+    IERC20 public current;
 
     uint256 private _totalSupply;
     mapping(address => uint256) private _balances;
@@ -28,7 +28,7 @@ contract AmpWrapper {
     function stake(uint256 amount) public virtual {
         _totalSupply = _totalSupply.add(amount);
         _balances[msg.sender] = _balances[msg.sender].add(amount);
-        amp.safeTransferFrom(msg.sender, address(this), amount);
+        current.safeTransferFrom(msg.sender, address(this), amount);
     }
 
     function withdraw(uint256 amount) public virtual {
@@ -36,7 +36,7 @@ contract AmpWrapper {
         require(masonShare >= amount, "Masonry: withdraw request greater than staked amount");
         _totalSupply = _totalSupply.sub(amount);
         _balances[msg.sender] = masonShare.sub(amount);
-        amp.safeTransfer(msg.sender, amount);
+        current.safeTransfer(msg.sender, amount);
     }
 }
 
@@ -67,7 +67,7 @@ contract Loop is AmpWrapper, ContractGuard {
     // flags
     bool public initialized = false;
 
-    IERC20 public tulip;
+    IERC20 public ampere;
     ITreasury public treasury;
 
     mapping(address => Masonseat) public masons;
@@ -114,12 +114,12 @@ contract Loop is AmpWrapper, ContractGuard {
     /* ========== GOVERNANCE ========== */
 
     function initialize(
-        IERC20 _tulip,
-        IERC20 _amp,
+        IERC20 _ampere,
+        IERC20 _current,
         ITreasury _treasury
     ) public notInitialized {
-        tulip = _tulip;
-        amp = _amp;
+        ampere = _ampere;
+        current = _current;
         treasury = _treasury;
 
         MasonrySnapshot memory genesisSnapshot = MasonrySnapshot({time : block.number, rewardReceived : 0, rewardPerShare : 0});
@@ -223,7 +223,7 @@ contract Loop is AmpWrapper, ContractGuard {
             require(masons[msg.sender].epochTimerStart.add(rewardLockupEpochs) <= treasury.epoch(), "Masonry: still in reward lockup");
             masons[msg.sender].epochTimerStart = treasury.epoch(); // reset timer
             masons[msg.sender].rewardEarned = 0;
-            tulip.safeTransfer(msg.sender, reward);
+            ampere.safeTransfer(msg.sender, reward);
             emit RewardPaid(msg.sender, reward);
         }
     }
@@ -243,14 +243,14 @@ contract Loop is AmpWrapper, ContractGuard {
         });
         masonryHistory.push(newSnapshot);
 
-        tulip.safeTransferFrom(msg.sender, address(this), amount);
+        ampere.safeTransferFrom(msg.sender, address(this), amount);
         emit RewardAdded(msg.sender, amount);
     }
 
     function governanceRecoverUnsupported(IERC20 _token, uint256 _amount, address _to) external onlyOperator {
         // do not allow to drain core tokens
-        require(address(_token) != address(tulip), "tulip");
-        require(address(_token) != address(amp), "amp");
+        require(address(_token) != address(ampere), "ampere");
+        require(address(_token) != address(current), "current");
         _token.safeTransfer(_to, _amount);
     }
 }
