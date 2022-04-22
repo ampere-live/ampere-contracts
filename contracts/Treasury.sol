@@ -38,16 +38,16 @@ contract Treasury is ContractGuard {
     uint256 public epochSupplyContractionLeft = 0;
 
     // core components
-    address public current;
-    address public lyte;
     address public amp;
+    address public lyte;
+    address public current;
 
     address public loop;
-    address public currentOracle;
+    address public ampOracle;
 
     // price
-    uint256 public currentPriceOne;
-    uint256 public currentPriceCeiling;
+    uint256 public ampPriceOne;
+    uint256 public ampPriceCeiling;
 
     uint256 public seigniorageSaved;
 
@@ -60,18 +60,18 @@ contract Treasury is ContractGuard {
     uint256 public maxSupplyContractionPercent;
     uint256 public maxDebtRatioPercent;
 
-    // 28 first epochs (1 week) with 4.5% expansion regardless of CURRENT price
+    // 28 first epochs (1 week) with 4.5% expansion regardless of AMP price
     uint256 public bootstrapEpochs;
     uint256 public bootstrapSupplyExpansionPercent;
 
     /* =================== Added variables =================== */
-    uint256 public previousEpochCurrentPrice;
+    uint256 public previousEpochAmpPrice;
     uint256 public maxDiscountRate; // when purchasing bond
     uint256 public maxPremiumRate; // when redeeming bond
     uint256 public discountPercent;
     uint256 public premiumThreshold;
     uint256 public premiumPercent;
-    uint256 public mintingFactorForPayingDebt; // print extra CURRENT during debt phase
+    uint256 public mintingFactorForPayingDebt; // print extra AMP during debt phase
 
     address public daoFund;
     uint256 public daoFundSharedPercent;
@@ -83,8 +83,8 @@ contract Treasury is ContractGuard {
 
     event Initialized(address indexed executor, uint256 at);
     event BurnedBonds(address indexed from, uint256 bondAmount);
-    event RedeemedBonds(address indexed from, uint256 currentAmount, uint256 bondAmount);
-    event BoughtBonds(address indexed from, uint256 currentAmount, uint256 bondAmount);
+    event RedeemedBonds(address indexed from, uint256 ampAmount, uint256 bondAmount);
+    event BoughtBonds(address indexed from, uint256 ampAmount, uint256 bondAmount);
     event TreasuryFunded(uint256 timestamp, uint256 seigniorage);
     event LoopFunded(uint256 timestamp, uint256 seigniorage);
     event DaoFundFunded(uint256 timestamp, uint256 seigniorage);
@@ -109,14 +109,14 @@ contract Treasury is ContractGuard {
         _;
 
         epoch = epoch.add(1);
-        epochSupplyContractionLeft = (getCurrentPrice() > currentPriceCeiling) ? 0 : getCurrentCirculatingSupply().mul(maxSupplyContractionPercent).div(10000);
+        epochSupplyContractionLeft = (getAmpPrice() > ampPriceCeiling) ? 0 : getAmpCirculatingSupply().mul(maxSupplyContractionPercent).div(10000);
     }
 
     modifier checkOperator {
         require(
-            IBasisAsset(current).operator() == address(this) &&
+            IBasisAsset(amp).operator() == address(this) &&
                 IBasisAsset(lyte).operator() == address(this) &&
-                IBasisAsset(amp).operator() == address(this) &&
+                IBasisAsset(current).operator() == address(this) &&
                 Operator(loop).operator() == address(this),
             "Treasury: need more permission"
         );
@@ -142,19 +142,19 @@ contract Treasury is ContractGuard {
     }
 
     // oracle
-    function getCurrentPrice() public view returns (uint256 currentPrice) {
-        try IOracle(currentOracle).consult(current, 1e18) returns (uint144 price) {
+    function getAmpPrice() public view returns (uint256 ampPrice) {
+        try IOracle(ampOracle).consult(amp, 1e18) returns (uint144 price) {
             return uint256(price);
         } catch {
-            revert("Treasury: failed to consult CURRENT price from the oracle");
+            revert("Treasury: failed to consult AMP price from the oracle");
         }
     }
 
-    function getCurrentUpdatedPrice() public view returns (uint256 _currentPrice) {
-        try IOracle(currentOracle).twap(current, 1e18) returns (uint144 price) {
+    function getAmpUpdatedPrice() public view returns (uint256 _ampPrice) {
+        try IOracle(ampOracle).twap(amp, 1e18) returns (uint144 price) {
             return uint256(price);
         } catch {
-            revert("Treasury: failed to consult CURRENT price from the oracle");
+            revert("Treasury: failed to consult AMP price from the oracle");
         }
     }
 
@@ -163,41 +163,41 @@ contract Treasury is ContractGuard {
         return seigniorageSaved;
     }
 
-    function getBurnableCurrentLeft() public view returns (uint256 _burnableCurrentLeft) {
-        uint256 _currentPrice = getCurrentPrice();
-        if (_currentPrice <= currentPriceOne) {
-            uint256 _currentSupply = getCurrentCirculatingSupply();
-            uint256 _bondMaxSupply = _currentSupply.mul(maxDebtRatioPercent).div(10000);
+    function getBurnableAmpLeft() public view returns (uint256 _burnableAmpLeft) {
+        uint256 _ampPrice = getAmpPrice();
+        if (_ampPrice <= ampPriceOne) {
+            uint256 _ampSupply = getAmpCirculatingSupply();
+            uint256 _bondMaxSupply = _ampSupply.mul(maxDebtRatioPercent).div(10000);
             uint256 _bondSupply = IERC20(lyte).totalSupply();
             if (_bondMaxSupply > _bondSupply) {
                 uint256 _maxMintableBond = _bondMaxSupply.sub(_bondSupply);
-                uint256 _maxBurnableCurrent = _maxMintableBond.mul(_currentPrice).div(1e18);
-                _burnableCurrentLeft = Math.min(epochSupplyContractionLeft, _maxBurnableCurrent);
+                uint256 _maxBurnableAmp = _maxMintableBond.mul(_ampPrice).div(1e18);
+                _burnableAmpLeft = Math.min(epochSupplyContractionLeft, _maxBurnableAmp);
             }
         }
     }
 
     function getRedeemableBonds() public view returns (uint256 _redeemableBonds) {
-        uint256 _currentPrice = getCurrentPrice();
-        if (_currentPrice > currentPriceCeiling) {
-            uint256 _totalCurrent = IERC20(current).balanceOf(address(this));
+        uint256 _ampPrice = getAmpPrice();
+        if (_ampPrice > ampPriceCeiling) {
+            uint256 _totalAmp = IERC20(amp).balanceOf(address(this));
             uint256 _rate = getBondPremiumRate();
             if (_rate > 0) {
-                _redeemableBonds = _totalCurrent.mul(1e18).div(_rate);
+                _redeemableBonds = _totalAmp.mul(1e18).div(_rate);
             }
         }
     }
 
     function getBondDiscountRate() public view returns (uint256 _rate) {
-        uint256 _currentPrice = getCurrentPrice();
-        if (_currentPrice <= currentPriceOne) {
+        uint256 _ampPrice = getAmpPrice();
+        if (_ampPrice <= ampPriceOne) {
             if (discountPercent == 0) {
                 // no discount
-                _rate = currentPriceOne;
+                _rate = ampPriceOne;
             } else {
-                uint256 _bondAmount = currentPriceOne.mul(1e18).div(_currentPrice); // to burn 1 CURRENT
-                uint256 _discountAmount = _bondAmount.sub(currentPriceOne).mul(discountPercent).div(10000);
-                _rate = currentPriceOne.add(_discountAmount);
+                uint256 _bondAmount = ampPriceOne.mul(1e18).div(_ampPrice); // to burn 1 AMP
+                uint256 _discountAmount = _bondAmount.sub(ampPriceOne).mul(discountPercent).div(10000);
+                _rate = ampPriceOne.add(_discountAmount);
                 if (maxDiscountRate > 0 && _rate > maxDiscountRate) {
                     _rate = maxDiscountRate;
                 }
@@ -206,19 +206,19 @@ contract Treasury is ContractGuard {
     }
 
     function getBondPremiumRate() public view returns (uint256 _rate) {
-        uint256 _currentPrice = getCurrentPrice();
-        if (_currentPrice > currentPriceCeiling) {
-            uint256 _currentPricePremiumThreshold = currentPriceOne.mul(premiumThreshold).div(100);
-            if (_currentPrice >= _currentPricePremiumThreshold) {
+        uint256 _ampPrice = getAmpPrice();
+        if (_ampPrice > ampPriceCeiling) {
+            uint256 _ampPricePremiumThreshold = ampPriceOne.mul(premiumThreshold).div(100);
+            if (_ampPrice >= _ampPricePremiumThreshold) {
                 //Price > 1.10
-                uint256 _premiumAmount = _currentPrice.sub(currentPriceOne).mul(premiumPercent).div(10000);
-                _rate = currentPriceOne.add(_premiumAmount);
+                uint256 _premiumAmount = _ampPrice.sub(ampPriceOne).mul(premiumPercent).div(10000);
+                _rate = ampPriceOne.add(_premiumAmount);
                 if (maxPremiumRate > 0 && _rate > maxPremiumRate) {
                     _rate = maxPremiumRate;
                 }
             } else {
                 // no premium bonus
-                _rate = currentPriceOne;
+                _rate = ampPriceOne;
             }
         }
     }
@@ -226,21 +226,22 @@ contract Treasury is ContractGuard {
     /* ========== GOVERNANCE ========== */
 
     function initialize(
-        address _current,
-        address _lyte,
         address _amp,
-        address _currentOracle,
-        address _loop
+        address _lyte,
+        address _current,
+        address _ampOracle,
+        address _loop,
+        uint _startTime
     ) public notInitialized {
-        current = _current;
-        lyte = _lyte;
         amp = _amp;
-        currentOracle = _currentOracle;
+        lyte = _lyte;
+        current = _current;
+        ampOracle = _ampOracle;
         loop = _loop;
-        startTime = block.timestamp + 2 hours;
+        startTime = _startTime;
 
-        currentPriceOne = 10**18;
-        currentPriceCeiling = currentPriceOne.mul(101).div(100);
+        ampPriceOne = 10**18;
+        ampPriceCeiling = ampPriceOne.mul(101).div(100);
 
         // Dynamic max expansion percent
         supplyTiers = [0 ether, 500000 ether, 1000000 ether, 1500000 ether, 2000000 ether, 5000000 ether, 10000000 ether, 20000000 ether, 50000000 ether];
@@ -250,7 +251,7 @@ contract Treasury is ContractGuard {
 
         bondDepletionFloorPercent = 10000; // 100% of Bond supply for depletion floor
         seigniorageExpansionFloorPercent = 3500; // At least 35% of expansion reserved for loop
-        maxSupplyContractionPercent = 300; // Upto 3.0% supply for contraction (to burn CURRENT and mint LYTE)
+        maxSupplyContractionPercent = 300; // Upto 3.0% supply for contraction (to burn AMP and mint LYTE)
         maxDebtRatioPercent = 3500; // Upto 35% supply of LYTE to purchase
 
         premiumThreshold = 110;
@@ -261,7 +262,7 @@ contract Treasury is ContractGuard {
         bootstrapSupplyExpansionPercent = 250;
 
         // set seigniorageSaved to it's balance
-        seigniorageSaved = IERC20(current).balanceOf(address(this));
+        seigniorageSaved = IERC20(amp).balanceOf(address(this));
 
         initialized = true;
         operator = msg.sender;
@@ -276,13 +277,13 @@ contract Treasury is ContractGuard {
         loop = _loop;
     }
 
-    function setCurrentOracle(address _currentOracle) external onlyOperator {
-        currentOracle = _currentOracle;
+    function setAmpOracle(address _ampOracle) external onlyOperator {
+        ampOracle = _ampOracle;
     }
 
-    function setCurrentPriceCeiling(uint256 _currentPriceCeiling) external onlyOperator {
-        require(_currentPriceCeiling >= currentPriceOne && _currentPriceCeiling <= currentPriceOne.mul(120).div(100), "out of range"); // [$1.0, $1.2]
-        currentPriceCeiling = _currentPriceCeiling;
+    function setAmpPriceCeiling(uint256 _ampPriceCeiling) external onlyOperator {
+        require(_ampPriceCeiling >= ampPriceOne && _ampPriceCeiling <= ampPriceOne.mul(120).div(100), "out of range"); // [$1.0, $1.2]
+        ampPriceCeiling = _ampPriceCeiling;
     }
 
     function setMaxSupplyExpansionPercents(uint256 _maxSupplyExpansionPercent) external onlyOperator {
@@ -363,7 +364,7 @@ contract Treasury is ContractGuard {
     }
 
     function setPremiumThreshold(uint256 _premiumThreshold) external onlyOperator {
-        require(_premiumThreshold >= currentPriceCeiling, "_premiumThreshold exceeds currentPriceCeiling");
+        require(_premiumThreshold >= ampPriceCeiling, "_premiumThreshold exceeds ampPriceCeiling");
         require(_premiumThreshold <= 150, "_premiumThreshold is higher than 1.5");
         premiumThreshold = _premiumThreshold;
     }
@@ -380,103 +381,100 @@ contract Treasury is ContractGuard {
 
     /* ========== MUTABLE FUNCTIONS ========== */
 
-    function _updateCurrentPrice() internal {
-        try IOracle(currentOracle).update() {} catch {}
+    function _updateAmpPrice() internal {
+        try IOracle(ampOracle).update() {} catch {}
     }
 
-    function getCurrentCirculatingSupply() public view returns (uint256) {
-        IERC20 currentErc20 = IERC20(current);
-        uint256 totalSupply = currentErc20.totalSupply();
+    function getAmpCirculatingSupply() public view returns (uint256) {
+        IERC20 ampErc20 = IERC20(amp);
+        uint256 totalSupply = ampErc20.totalSupply();
         uint256 balanceExcluded = 0;
-        for (uint8 entryId = 0; entryId < excludedFromTotalSupply.length; ++entryId) {
-            balanceExcluded = balanceExcluded.add(currentErc20.balanceOf(excludedFromTotalSupply[entryId]));
-        }
         return totalSupply.sub(balanceExcluded);
     }
 
-    function buyBonds(uint256 _currentAmount, uint256 targetPrice) external onlyOneBlock checkCondition checkOperator {
-        require(_currentAmount > 0, "Treasury: cannot purchase bonds with zero amount");
+    function buyBonds(uint256 _ampAmount, uint256 targetPrice) external onlyOneBlock checkCondition checkOperator {
+        require(_ampAmount > 0, "Treasury: cannot purchase bonds with zero amount");
 
-        uint256 currentPrice = getCurrentPrice();
-        require(currentPrice == targetPrice, "Treasury: CURRENT price moved");
+        uint256 ampPrice = getAmpPrice();
+        require(ampPrice == targetPrice, "Treasury: AMP price moved");
         require(
-            currentPrice < currentPriceOne, // price < $1
-            "Treasury: currentPrice not eligible for bond purchase"
+            ampPrice < ampPriceOne, // price < $1
+            "Treasury: ampPrice not eligible for bond purchase"
         );
 
-        require(_currentAmount <= epochSupplyContractionLeft, "Treasury: not enough bond left to purchase");
+        require(_ampAmount <= epochSupplyContractionLeft, "Treasury: not enough bond left to purchase");
 
         uint256 _rate = getBondDiscountRate();
         require(_rate > 0, "Treasury: invalid bond rate");
 
-        uint256 _bondAmount = _currentAmount.mul(_rate).div(1e18);
-        uint256 currentSupply = getCurrentCirculatingSupply();
+        uint256 _bondAmount = _ampAmount.mul(_rate).div(1e18);
+        uint256 ampSupply = getAmpCirculatingSupply();
         uint256 newBondSupply = IERC20(lyte).totalSupply().add(_bondAmount);
-        require(newBondSupply <= currentSupply.mul(maxDebtRatioPercent).div(10000), "over max debt ratio");
+        require(newBondSupply <= ampSupply.mul(maxDebtRatioPercent).div(10000), "over max debt ratio");
 
-        IBasisAsset(current).burnFrom(msg.sender, _currentAmount);
+        IBasisAsset(amp).burnFrom(msg.sender, _ampAmount);
         IBasisAsset(lyte).mint(msg.sender, _bondAmount);
 
-        epochSupplyContractionLeft = epochSupplyContractionLeft.sub(_currentAmount);
-        _updateCurrentPrice();
+        epochSupplyContractionLeft = epochSupplyContractionLeft.sub(_ampAmount);
+        _updateAmpPrice();
 
-        emit BoughtBonds(msg.sender, _currentAmount, _bondAmount);
+        emit BoughtBonds(msg.sender, _ampAmount, _bondAmount);
     }
 
     function redeemBonds(uint256 _bondAmount, uint256 targetPrice) external onlyOneBlock checkCondition checkOperator {
         require(_bondAmount > 0, "Treasury: cannot redeem bonds with zero amount");
 
-        uint256 currentPrice = getCurrentPrice();
-        require(currentPrice == targetPrice, "Treasury: CURRENT price moved");
+        uint256 ampPrice = getAmpPrice();
+        require(ampPrice == targetPrice, "Treasury: AMP price moved");
         require(
-            currentPrice > currentPriceCeiling, // price > $1.01
-            "Treasury: currentPrice not eligible for bond purchase"
+            ampPrice > ampPriceCeiling, // price > $1.01
+            "Treasury: ampPrice not eligible for bond purchase"
         );
 
         uint256 _rate = getBondPremiumRate();
         require(_rate > 0, "Treasury: invalid bond rate");
 
-        uint256 _currentAmount = _bondAmount.mul(_rate).div(1e18);
-        require(IERC20(current).balanceOf(address(this)) >= _currentAmount, "Treasury: treasury has no more lyteget");
+        uint256 _ampAmount = _bondAmount.mul(_rate).div(1e18);
+        require(IERC20(amp).balanceOf(address(this)) >= _ampAmount, "Treasury: treasury has no more lyteget");
 
-        seigniorageSaved = seigniorageSaved.sub(Math.min(seigniorageSaved, _currentAmount));
+        seigniorageSaved = seigniorageSaved.sub(Math.min(seigniorageSaved, _ampAmount));
 
         IBasisAsset(lyte).burnFrom(msg.sender, _bondAmount);
-        IERC20(current).safeTransfer(msg.sender, _currentAmount);
+        IERC20(amp).safeTransfer(msg.sender, _ampAmount);
 
-        _updateCurrentPrice();
+        _updateAmpPrice();
 
-        emit RedeemedBonds(msg.sender, _currentAmount, _bondAmount);
+        emit RedeemedBonds(msg.sender, _ampAmount, _bondAmount);
     }
 
     function _sendToMasonry(uint256 _amount) internal {
-        IBasisAsset(current).mint(address(this), _amount);
+        IBasisAsset(amp).mint(address(this), _amount);
 
         uint256 _daoFundSharedAmount = 0;
         if (daoFundSharedPercent > 0) {
             _daoFundSharedAmount = _amount.mul(daoFundSharedPercent).div(10000);
-            IERC20(current).transfer(daoFund, _daoFundSharedAmount);
+            IERC20(amp).transfer(daoFund, _daoFundSharedAmount);
             emit DaoFundFunded(block.timestamp, _daoFundSharedAmount);
         }
 
         uint256 _devFundSharedAmount = 0;
         if (devFundSharedPercent > 0) {
             _devFundSharedAmount = _amount.mul(devFundSharedPercent).div(10000);
-            IERC20(current).transfer(devFund, _devFundSharedAmount);
+            IERC20(amp).transfer(devFund, _devFundSharedAmount);
             emit DevFundFunded(block.timestamp, _devFundSharedAmount);
         }
 
         _amount = _amount.sub(_daoFundSharedAmount).sub(_devFundSharedAmount);
 
-        IERC20(current).safeApprove(loop, 0);
-        IERC20(current).safeApprove(loop, _amount);
+        IERC20(amp).safeApprove(loop, 0);
+        IERC20(amp).safeApprove(loop, _amount);
         IMasonry(loop).allocateSeigniorage(_amount);
         emit LoopFunded(block.timestamp, _amount);
     }
 
-    function _calculateMaxSupplyExpansionPercent(uint256 _currentSupply) internal returns (uint256) {
+    function _calculateMaxSupplyExpansionPercent(uint256 _ampSupply) internal returns (uint256) {
         for (uint8 tierId = 8; tierId >= 0; --tierId) {
-            if (_currentSupply >= supplyTiers[tierId]) {
+            if (_ampSupply >= supplyTiers[tierId]) {
                 maxSupplyExpansionPercent = maxExpansionTiers[tierId];
                 break;
             }
@@ -485,29 +483,29 @@ contract Treasury is ContractGuard {
     }
 
     function allocateSeigniorage() external onlyOneBlock checkCondition checkEpoch checkOperator {
-        _updateCurrentPrice();
-        previousEpochCurrentPrice = getCurrentPrice();
-        uint256 currentSupply = getCurrentCirculatingSupply().sub(seigniorageSaved);
+        _updateAmpPrice();
+        previousEpochAmpPrice = getAmpPrice();
+        uint256 ampSupply = getAmpCirculatingSupply().sub(seigniorageSaved);
         if (epoch < bootstrapEpochs) {
             // 28 first epochs with 4.5% expansion
-            _sendToMasonry(currentSupply.mul(bootstrapSupplyExpansionPercent).div(10000));
+            _sendToMasonry(ampSupply.mul(bootstrapSupplyExpansionPercent).div(10000));
         } else {
-            if (previousEpochCurrentPrice > currentPriceCeiling) {
-                // Expansion ($CURRENT Price > 1 $FUSE): there is some seigniorage to be allocated
+            if (previousEpochAmpPrice > ampPriceCeiling) {
+                // Expansion ($AMP Price > 1 $FUSE): there is some seigniorage to be allocated
                 uint256 bondSupply = IERC20(lyte).totalSupply();
-                uint256 _percentage = previousEpochCurrentPrice.sub(currentPriceOne);
+                uint256 _percentage = previousEpochAmpPrice.sub(ampPriceOne);
                 uint256 _savedForBond;
                 uint256 _savedForLoop;
-                uint256 _mse = _calculateMaxSupplyExpansionPercent(currentSupply).mul(1e14);
+                uint256 _mse = _calculateMaxSupplyExpansionPercent(ampSupply).mul(1e14);
                 if (_percentage > _mse) {
                     _percentage = _mse;
                 }
                 if (seigniorageSaved >= bondSupply.mul(bondDepletionFloorPercent).div(10000)) {
                     // saved enough to pay debt, mint as usual rate
-                    _savedForLoop = currentSupply.mul(_percentage).div(1e18);
+                    _savedForLoop = ampSupply.mul(_percentage).div(1e18);
                 } else {
                     // have not saved enough to pay debt, mint more
-                    uint256 _seigniorage = currentSupply.mul(_percentage).div(1e18);
+                    uint256 _seigniorage = ampSupply.mul(_percentage).div(1e18);
                     _savedForLoop = _seigniorage.mul(seigniorageExpansionFloorPercent).div(10000);
                     _savedForBond = _seigniorage.sub(_savedForLoop);
                     if (mintingFactorForPayingDebt > 0) {
@@ -519,7 +517,7 @@ contract Treasury is ContractGuard {
                 }
                 if (_savedForBond > 0) {
                     seigniorageSaved = seigniorageSaved.add(_savedForBond);
-                    IBasisAsset(current).mint(address(this), _savedForBond);
+                    IBasisAsset(amp).mint(address(this), _savedForBond);
                     emit TreasuryFunded(block.timestamp, _savedForBond);
                 }
             }
@@ -532,8 +530,8 @@ contract Treasury is ContractGuard {
         address _to
     ) external onlyOperator {
         // do not allow to drain core tokens
-        require(address(_token) != address(current), "current");
         require(address(_token) != address(amp), "amp");
+        require(address(_token) != address(current), "current");
         require(address(_token) != address(lyte), "lyte");
         _token.safeTransfer(_to, _amount);
     }

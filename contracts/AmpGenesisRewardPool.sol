@@ -6,9 +6,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-// Note that this pool has no minter key of CURRENT (rewards).
-// Instead, the governance will call CURRENT distributeReward method and send reward to this pool at the beginning.
-contract CurrentGenesisRewardPool {
+// Note that this pool has no minter key of AMP (rewards).
+// Instead, the governance will call AMP distributeReward method and send reward to this pool at the beginning.
+contract AmpGenesisRewardPool {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -26,11 +26,11 @@ contract CurrentGenesisRewardPool {
         IERC20 token; // Address of LP token contract.
         uint256 allocPoint; // How many allocation points assigned to this pool. TOMB to distribute.
         uint256 lastRewardTime; // Last time that TOMB distribution occurs.
-        uint256 accCurrentPerShare; // Accumulated TOMB per share, times 1e18. See below.
+        uint256 accAmpPerShare; // Accumulated TOMB per share, times 1e18. See below.
         bool isStarted; // if lastRewardBlock has passed
     }
 
-    IERC20 public current;
+    IERC20 public amp;
     address public feeToken;
 
     // Info of each pool.
@@ -48,7 +48,7 @@ contract CurrentGenesisRewardPool {
     // The time when TOMB mining ends.
     uint256 public poolEndTime;
 
-    uint256 public currentPerSecond = 0.347 ether; // 30000 TOMB / (1h * 60min * 60s)
+    uint256 public ampPerSecond = 0.347 ether; // 30000 TOMB / (1h * 60min * 60s)
     uint256 public runningTime = 24 hours; // 12 hours
     uint256 public constant TOTAL_REWARDS = 30000 ether;
 
@@ -58,12 +58,12 @@ contract CurrentGenesisRewardPool {
     event RewardPaid(address indexed user, uint256 amount);
 
     constructor(
-        address _current,
+        address _amp,
         address _feeToken
         // uint256 _poolStartTime
     ) public {
         // require(block.timestamp < _poolStartTime, "late");
-        if (_current != address(0)) current = IERC20(_current);
+        if (_amp != address(0)) amp = IERC20(_amp);
         if (_feeToken != address(0)) feeToken = _feeToken;
         operator = msg.sender;
         poolStartTime = block.timestamp;
@@ -71,14 +71,14 @@ contract CurrentGenesisRewardPool {
     }
 
     modifier onlyOperator() {
-        require(operator == msg.sender, "CurrentGenesisPool: caller is not the operator");
+        require(operator == msg.sender, "AmpGenesisPool: caller is not the operator");
         _;
     }
 
     function checkPoolDuplicate(IERC20 _token) internal view {
         uint256 length = poolInfo.length;
         for (uint256 pid = 0; pid < length; ++pid) {
-            require(poolInfo[pid].token != _token, "CurrentGenesisPool: existing pool?");
+            require(poolInfo[pid].token != _token, "AmpGenesisPool: existing pool?");
         }
     }
 
@@ -115,7 +115,7 @@ contract CurrentGenesisRewardPool {
             token : _token,
             allocPoint : _allocPoint,
             lastRewardTime : _lastRewardTime,
-            accCurrentPerShare : 0,
+            accAmpPerShare : 0,
             isStarted : _isStarted
             }));
         if (_isStarted) {
@@ -140,27 +140,27 @@ contract CurrentGenesisRewardPool {
         if (_fromTime >= _toTime) return 0;
         if (_toTime >= poolEndTime) {
             if (_fromTime >= poolEndTime) return 0;
-            if (_fromTime <= poolStartTime) return poolEndTime.sub(poolStartTime).mul(currentPerSecond);
-            return poolEndTime.sub(_fromTime).mul(currentPerSecond);
+            if (_fromTime <= poolStartTime) return poolEndTime.sub(poolStartTime).mul(ampPerSecond);
+            return poolEndTime.sub(_fromTime).mul(ampPerSecond);
         } else {
             if (_toTime <= poolStartTime) return 0;
-            if (_fromTime <= poolStartTime) return _toTime.sub(poolStartTime).mul(currentPerSecond);
-            return _toTime.sub(_fromTime).mul(currentPerSecond);
+            if (_fromTime <= poolStartTime) return _toTime.sub(poolStartTime).mul(ampPerSecond);
+            return _toTime.sub(_fromTime).mul(ampPerSecond);
         }
     }
 
     // View function to see pending TOMB on frontend.
-    function pendingCURRENT(uint256 _pid, address _user) external view returns (uint256) {
+    function pendingAMP(uint256 _pid, address _user) external view returns (uint256) {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][_user];
-        uint256 accCurrentPerShare = pool.accCurrentPerShare;
+        uint256 accAmpPerShare = pool.accAmpPerShare;
         uint256 tokenSupply = pool.token.balanceOf(address(this));
         if (block.timestamp > pool.lastRewardTime && tokenSupply != 0) {
             uint256 _generatedReward = getGeneratedReward(pool.lastRewardTime, block.timestamp);
-            uint256 _currentReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
-            accCurrentPerShare = accCurrentPerShare.add(_currentReward.mul(1e18).div(tokenSupply));
+            uint256 _ampReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
+            accAmpPerShare = accAmpPerShare.add(_ampReward.mul(1e18).div(tokenSupply));
         }
-        return user.amount.mul(accCurrentPerShare).div(1e18).sub(user.rewardDebt);
+        return user.amount.mul(accAmpPerShare).div(1e18).sub(user.rewardDebt);
     }
 
     // Update reward variables for all pools. Be careful of gas spending!
@@ -188,8 +188,8 @@ contract CurrentGenesisRewardPool {
         }
         if (totalAllocPoint > 0) {
             uint256 _generatedReward = getGeneratedReward(pool.lastRewardTime, block.timestamp);
-            uint256 _currentReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
-            pool.accCurrentPerShare = pool.accCurrentPerShare.add(_currentReward.mul(1e18).div(tokenSupply));
+            uint256 _ampReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
+            pool.accAmpPerShare = pool.accAmpPerShare.add(_ampReward.mul(1e18).div(tokenSupply));
         }
         pool.lastRewardTime = block.timestamp;
     }
@@ -201,9 +201,9 @@ contract CurrentGenesisRewardPool {
         UserInfo storage user = userInfo[_pid][_sender];
         updatePool(_pid);
         if (user.amount > 0) {
-            uint256 _pending = user.amount.mul(pool.accCurrentPerShare).div(1e18).sub(user.rewardDebt);
+            uint256 _pending = user.amount.mul(pool.accAmpPerShare).div(1e18).sub(user.rewardDebt);
             if (_pending > 0) {
-                safeCurrentTransfer(_sender, _pending);
+                safeAmpTransfer(_sender, _pending);
                 emit RewardPaid(_sender, _pending);
             }
         }
@@ -215,7 +215,7 @@ contract CurrentGenesisRewardPool {
                 user.amount = user.amount.add(_amount);
             }
         }
-        user.rewardDebt = user.amount.mul(pool.accCurrentPerShare).div(1e18);
+        user.rewardDebt = user.amount.mul(pool.accAmpPerShare).div(1e18);
         emit Deposit(_sender, _pid, _amount);
     }
 
@@ -226,16 +226,16 @@ contract CurrentGenesisRewardPool {
         UserInfo storage user = userInfo[_pid][_sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 _pending = user.amount.mul(pool.accCurrentPerShare).div(1e18).sub(user.rewardDebt);
+        uint256 _pending = user.amount.mul(pool.accAmpPerShare).div(1e18).sub(user.rewardDebt);
         if (_pending > 0) {
-            safeCurrentTransfer(_sender, _pending);
+            safeAmpTransfer(_sender, _pending);
             emit RewardPaid(_sender, _pending);
         }
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.token.safeTransfer(_sender, _amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accCurrentPerShare).div(1e18);
+        user.rewardDebt = user.amount.mul(pool.accAmpPerShare).div(1e18);
         emit Withdraw(_sender, _pid, _amount);
     }
 
@@ -250,14 +250,14 @@ contract CurrentGenesisRewardPool {
         emit EmergencyWithdraw(msg.sender, _pid, _amount);
     }
 
-    // Safe Current transfer function, just in case if rounding error causes pool to not have enough TOMBs.
-    function safeCurrentTransfer(address _to, uint256 _amount) internal {
-        uint256 _currentBalance = current.balanceOf(address(this));
-        if (_currentBalance > 0) {
-            if (_amount > _currentBalance) {
-                current.safeTransfer(_to, _currentBalance);
+    // Safe Amp transfer function, just in case if rounding error causes pool to not have enough TOMBs.
+    function safeAmpTransfer(address _to, uint256 _amount) internal {
+        uint256 _ampBalance = amp.balanceOf(address(this));
+        if (_ampBalance > 0) {
+            if (_amount > _ampBalance) {
+                amp.safeTransfer(_to, _ampBalance);
             } else {
-                current.safeTransfer(_to, _amount);
+                amp.safeTransfer(_to, _amount);
             }
         }
     }
@@ -268,8 +268,8 @@ contract CurrentGenesisRewardPool {
 
     function governanceRecoverUnsupported(IERC20 _token, uint256 amount, address to) external onlyOperator {
         if (block.timestamp < poolEndTime + 90 days) {
-            // do not allow to drain core token (CURRENT or lps) if less than 90 days after pool ends
-            require(_token != current, "current");
+            // do not allow to drain core token (AMP or lps) if less than 90 days after pool ends
+            require(_token != amp, "amp");
             uint256 length = poolInfo.length;
             for (uint256 pid = 0; pid < length; ++pid) {
                 PoolInfo storage pool = poolInfo[pid];
