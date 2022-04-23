@@ -6,9 +6,9 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-// Note that this pool has no minter key of AMP (rewards).
-// Instead, the governance will call AMP distributeReward method and send reward to this pool at the beginning.
-contract AmpRewardPool {
+// Note that this pool has no minter key of CURRENT (rewards).
+// Instead, the governance will call CURRENT distributeReward method and send reward to this pool at the beginning.
+contract CurrentRewardPool {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -26,11 +26,11 @@ contract AmpRewardPool {
         IERC20 token; // Address of LP token contract.
         uint256 allocPoint; // How many allocation points assigned to this pool. AMPs to distribute per block.
         uint256 lastRewardTime; // Last time that AMPs distribution occurs.
-        uint256 accAmpPerShare; // Accumulated AMPs per share, times 1e18. See below.
+        uint256 accCurrentPerShare; // Accumulated AMPs per share, times 1e18. See below.
         bool isStarted; // if lastRewardTime has passed
     }
 
-    IERC20 public amp;
+    IERC20 public current;
 
     // Info of each pool.
     PoolInfo[] public poolInfo;
@@ -47,9 +47,9 @@ contract AmpRewardPool {
     // The time when AMP mining ends.
     uint256 public poolEndTime;
 
-    uint256 public ampPerSecond = 0.0025368 ether; // 80000 shares / (365 days * 24h * 60min * 60s)
+    uint256 public currentPerSecond = 0.0022197 ether; // 70000 shares / (365 days * 24h * 60min * 60s)
     uint256 public runningTime = 365 days;
-    uint256 public constant TOTAL_REWARDS = 80000 ether;
+    uint256 public constant TOTAL_REWARDS = 70000 ether;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -57,23 +57,24 @@ contract AmpRewardPool {
     event RewardPaid(address indexed user, uint256 amount);
 
     constructor(
-        IERC20 _amp
+        IERC20 _current,
+        uint _startTime
     ) public {
-        amp = _amp;
-        poolStartTime = block.timestamp + 1 hours + 36 minutes;
+        current = _current;
+        poolStartTime = _startTime;
         poolEndTime = poolStartTime + runningTime;
         operator = msg.sender;
     }
 
     modifier onlyOperator() {
-        require(operator == msg.sender, "AmpRewardPool: caller is not the operator");
+        require(operator == msg.sender, "CurrentRewardPool: caller is not the operator");
         _;
     }
 
     function checkPoolDuplicate(IERC20 _token) internal view {
         uint256 length = poolInfo.length;
         for (uint256 pid = 0; pid < length; ++pid) {
-            require(poolInfo[pid].token != _token, "AmpRewardPool: existing pool?");
+            require(poolInfo[pid].token != _token, "CurrentRewardPool: existing pool?");
         }
     }
 
@@ -135,12 +136,12 @@ contract AmpRewardPool {
         if (_fromTime >= _toTime) return 0;
         if (_toTime >= poolEndTime) {
             if (_fromTime >= poolEndTime) return 0;
-            if (_fromTime <= poolStartTime) return poolEndTime.sub(poolStartTime).mul(ampPerSecond);
-            return poolEndTime.sub(_fromTime).mul(ampPerSecond);
+            if (_fromTime <= poolStartTime) return poolEndTime.sub(poolStartTime).mul(currentPerSecond);
+            return poolEndTime.sub(_fromTime).mul(currentPerSecond);
         } else {
             if (_toTime <= poolStartTime) return 0;
-            if (_fromTime <= poolStartTime) return _toTime.sub(poolStartTime).mul(ampPerSecond);
-            return _toTime.sub(_fromTime).mul(ampPerSecond);
+            if (_fromTime <= poolStartTime) return _toTime.sub(poolStartTime).mul(currentPerSecond);
+            return _toTime.sub(_fromTime).mul(currentPerSecond);
         }
     }
 
@@ -183,8 +184,8 @@ contract AmpRewardPool {
         }
         if (totalAllocPoint > 0) {
             uint256 _generatedReward = getGeneratedReward(pool.lastRewardTime, block.timestamp);
-            uint256 _ampReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
-            pool.accAmpPerShare = pool.accAmpPerShare.add(_ampReward.mul(1e18).div(tokenSupply));
+            uint256 _currentReward = _generatedReward.mul(pool.allocPoint).div(totalAllocPoint);
+            pool.accCurrentPerShare = pool.accCurrentPerShare.add(_currentReward.mul(1e18).div(tokenSupply));
         }
         pool.lastRewardTime = block.timestamp;
     }
@@ -196,7 +197,7 @@ contract AmpRewardPool {
         UserInfo storage user = userInfo[_pid][_sender];
         updatePool(_pid);
         if (user.amount > 0) {
-            uint256 _pending = user.amount.mul(pool.accAmpPerShare).div(1e18).sub(user.rewardDebt);
+            uint256 _pending = user.amount.mul(pool.accCurrentPerShare).div(1e18).sub(user.rewardDebt);
             if (_pending > 0) {
                 safeAmpTransfer(_sender, _pending);
                 emit RewardPaid(_sender, _pending);
@@ -206,7 +207,7 @@ contract AmpRewardPool {
             pool.token.safeTransferFrom(_sender, address(this), _amount);
             user.amount = user.amount.add(_amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accAmpPerShare).div(1e18);
+        user.rewardDebt = user.amount.mul(pool.accCurrentPerShare).div(1e18);
         emit Deposit(_sender, _pid, _amount);
     }
 
@@ -217,7 +218,7 @@ contract AmpRewardPool {
         UserInfo storage user = userInfo[_pid][_sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        uint256 _pending = user.amount.mul(pool.accAmpPerShare).div(1e18).sub(user.rewardDebt);
+        uint256 _pending = user.amount.mul(pool.accCurrentPerShare).div(1e18).sub(user.rewardDebt);
         if (_pending > 0) {
             safeAmpTransfer(_sender, _pending);
             emit RewardPaid(_sender, _pending);
@@ -226,7 +227,7 @@ contract AmpRewardPool {
             user.amount = user.amount.sub(_amount);
             pool.token.safeTransfer(_sender, _amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accAmpPerShare).div(1e18);
+        user.rewardDebt = user.amount.mul(pool.accCurrentPerShare).div(1e18);
         emit Withdraw(_sender, _pid, _amount);
     }
 
@@ -241,14 +242,14 @@ contract AmpRewardPool {
         emit EmergencyWithdraw(msg.sender, _pid, _amount);
     }
 
-    // Safe AMP transfer function, just in case if rounding error causes pool to not have enough AMPs.
-    function safeAmpTransfer(address _to, uint256 _amount) internal {
-        uint256 _ampBal = amp.balanceOf(address(this));
-        if (_ampBal > 0) {
-            if (_amount > _ampBal) {
-                amp.safeTransfer(_to, _ampBal);
+    // Safe CURRENT transfer function, just in case if rounding error causes pool to not have enough CURRENTs.
+    function safeCurrentTransfer(address _to, uint256 _amount) internal {
+        uint256 _currentBal = current.balanceOf(address(this));
+        if (_currentBal > 0) {
+            if (_amount > _currentBal) {
+                current.safeTransfer(_to, _currentBal);
             } else {
-                amp.safeTransfer(_to, _amount);
+                current.safeTransfer(_to, _amount);
             }
         }
     }
@@ -259,8 +260,8 @@ contract AmpRewardPool {
 
     function governanceRecoverUnsupported(IERC20 _token, uint256 amount, address to) external onlyOperator {
         if (block.timestamp < poolEndTime + 90 days) {
-            // do not allow to drain core token (AMP or lps) if less than 90 days after pool ends
-            require(_token != amp, "amp");
+            // do not allow to drain core token (CURRENT or lps) if less than 90 days after pool ends
+            require(_token != current, "current");
             uint256 length = poolInfo.length;
             for (uint256 pid = 0; pid < length; ++pid) {
                 PoolInfo storage pool = poolInfo[pid];
