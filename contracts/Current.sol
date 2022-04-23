@@ -1,50 +1,47 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/utils/Context.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./owner/Operator.sol";
-import "./lib/SafeMath8.sol";
-import "./interfaces/IOracle.sol";
 
 contract Current is ERC20Burnable, Operator {
-    using SafeMath8 for uint8;
     using SafeMath for uint256;
 
-    // Initial distribution for the first 24h genesis pools
-    uint256 public constant INITIAL_GENESIS_POOL_DISTRIBUTION = 50000 ether;
-    // Distribution for initial offering
-    uint256 public constant INITIAL_OFFERING_DISTRIBUTION = 90000 ether;
+    // TOTAL MAX SUPPLY = 100,000 Current
+    uint256 public constant FARMING_POOL_REWARD_ALLOCATION = 70000 ether;
+    uint256 public constant COMMUNITY_FUND_POOL_ALLOCATION = 15000 ether;
+    uint256 public constant DEV_FUND_POOL_ALLOCATION = 10000 ether;
+    uint256 public constant DAO_POOL_ALLOCATION = 5000 ether;
 
-    // Have the rewards been distributed to the pools
+    uint256 public constant VESTING_DURATION = 365 days;
+    uint256 public startTime;
+    uint256 public endTime;
+
+    uint256 public communityFundRewardRate;
+    uint256 public devFundRewardRate;
+    uint256 public daoRewardRate;
+
+    address public communityFund;
+    address public devFund;
+    address public daoFund;
+
+    uint256 public communityFundLastClaimed;
+    uint256 public devFundLastClaimed;
+    uint256 public daoFundLastClaimed;
+
     bool public rewardPoolDistributed = false;
-    bool public initialOfferingDistributed = false;
 
-    /* ================= Taxation =============== */
-    // Address of the Oracle
-    address public currentOracle;
-    // Address of the Tax Office
+    uint256 public taxRate = 100;
+    address public taxCollectorAddress;
+    mapping(address => bool) public excludedAddresses;
     address public taxOffice;
 
-    address private _operator;
-
-    // Current tax rate
-    uint256 public taxRate;
-    // Price threshold below which taxes will get burned
-    uint256 public burnThreshold = 1.10e18;
-    // Address of the tax collector wallet
-    address public taxCollectorAddress;
-
-    // Should the taxes be calculated using the tax tiers
-    bool public autoCalculateTax;
-
-    // Sender addresses excluded from Tax
-    mapping(address => bool) public excludedAddresses;
-
-    event TaxOfficeTransferred(address oldAddress, address newAddress);
+    bool public openTrading = false;
+    mapping(address => bool) public whitelistAddresses;
 
     modifier onlyTaxOffice() {
         require(taxOffice == msg.sender, "Caller is not the tax office");
@@ -56,49 +53,126 @@ contract Current is ERC20Burnable, Operator {
         _;
     }
 
+    constructor(uint256 _startTime, address _communityFund, address _devFund, address _daoFund) public ERC20("Current", "CURRENT") {
+        _mint(msg.sender, 1 ether); // mint 100 CURRENT for initial pools deployment
+
+        startTime = _startTime;
+        endTime = startTime + VESTING_DURATION;
+
+        communityFundLastClaimed = startTime;
+        devFundLastClaimed = startTime;
+        daoFundLastClaimed = startTime;
+
+        communityFundRewardRate = COMMUNITY_FUND_POOL_ALLOCATION.div(VESTING_DURATION);
+        devFundRewardRate = DEV_FUND_POOL_ALLOCATION.div(VESTING_DURATION);
+        daoRewardRate = DAO_POOL_ALLOCATION.div(VESTING_DURATION);
+
+        require(_devFund != address(0), "Address cannot be 0");
+        devFund = _devFund;
+
+        require(_communityFund != address(0), "Address cannot be 0");
+        communityFund = _communityFund;
+
+        require(_daoFund != address(0), "Address cannot be 0");
+        daoFund = _daoFund;
+
+        excludeAddress(msg.sender);
+        whitelistAddresses[msg.sender] = true;
+    }
+
+    function setTreasuryFund(address _communityFund) external {
+        require(msg.sender == communityFund, "!dev");
+        require(_communityFund != address(0), "zero");
+        communityFund = _communityFund;
+    }
+
+    function setDevFund(address _devFund) external {
+        require(msg.sender == devFund, "!dev");
+        require(_devFund != address(0), "zero");
+        devFund = _devFund;
+    }
+
+    function unclaimedTreasuryFund() public view returns (uint256 _pending) {
+        uint256 _now = block.timestamp;
+        if (_now > endTime) _now = endTime;
+        if (communityFundLastClaimed >= _now) return 0;
+        _pending = _now.sub(communityFundLastClaimed).mul(communityFundRewardRate);
+    }
+
+    function unclaimedDevFund() public view returns (uint256 _pending) {
+        uint256 _now = block.timestamp;
+        if (_now > endTime) _now = endTime;
+        if (devFundLastClaimed >= _now) return 0;
+        _pending = _now.sub(devFundLastClaimed).mul(devFundRewardRate);
+    }
+
+    function unclaimedDaoFund() public view returns (uint256 _pending) {
+        uint256 _now = block.timestamp;
+        if (_now > endTime) _now = endTime;
+        if (daoFundLastClaimed >= _now) return 0;
+        _pending = _now.sub(daoFundLastClaimed).mul(daoRewardRate);
+    }
+
     /**
-     * @notice Constructs the CURRENT ERC-20 contract.
+     * @dev Claim pending rewards to community and dev fund
      */
-    constructor(uint256 _taxRate, address _taxCollectorAddress) public ERC20("CURRENT", "CURRENT") {
-        // Mints 1 CURRENT to contract creator for initial pool setup
-        require(_taxRate < 10000, "tax equal or bigger to 100%");
-        require(_taxCollectorAddress != address(0), "tax collector address must be non-zero address");
-
-        emit OperatorTransferred(address(0), _operator);
-
-        excludeAddress(address(this));
-
-        _mint(msg.sender, 1 ether);
-        taxRate = _taxRate;
-        taxCollectorAddress = _taxCollectorAddress;
-    }
-
-    function setBurnThreshold(uint256 _burnThreshold) public onlyTaxOffice returns (bool) {
-        burnThreshold = _burnThreshold;
-    }
-
-    function _getCurrentPrice() internal view returns (uint256 _currentPrice) {
-        try IOracle(currentOracle).consult(address(this), 1e18) returns (uint144 _price) {
-            return uint256(_price);
-        } catch {
-            revert("Current: failed to fetch CURRENT price from Oracle");
+    function claimRewards() external {
+        uint256 _pending = unclaimedTreasuryFund();
+        if (_pending > 0 && communityFund != address(0)) {
+            _mint(communityFund, _pending);
+            communityFundLastClaimed = block.timestamp;
+        }
+        _pending = unclaimedDevFund();
+        if (_pending > 0 && devFund != address(0)) {
+            _mint(devFund, _pending);
+            devFundLastClaimed = block.timestamp;
+        }
+        _pending = unclaimedDaoFund();
+        if (_pending > 0 && devFund != address(0)) {
+            _mint(devFund, _pending);
+            devFundLastClaimed = block.timestamp;
         }
     }
 
-    function setCurrentOracle(address _currentOracle) public onlyOperatorOrTaxOffice {
-        require(_currentOracle != address(0), "oracle address cannot be 0 address");
-        currentOracle = _currentOracle;
+    function transferFrom(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) public override returns (bool) {
+        if (taxRate == 0 || excludedAddresses[sender]) {
+            _transfer(sender, recipient, amount);
+        } else {
+            _transferWithTax(sender, recipient, amount);
+        }
+
+        _approve(sender, _msgSender(), allowance(sender, _msgSender()).sub(amount, "ERC20: transfer amount exceeds allowance"));
+        return true;
     }
 
-    function setTaxOffice(address _taxOffice) public onlyOperatorOrTaxOffice {
-        require(_taxOffice != address(0), "tax office address cannot be 0 address");
-        emit TaxOfficeTransferred(taxOffice, _taxOffice);
-        taxOffice = _taxOffice;
+    function _transferWithTax(
+        address sender,
+        address recipient,
+        uint256 amount
+    ) internal returns (bool) {
+        uint256 taxAmount = amount.mul(taxRate).div(10000);
+        uint256 amountAfterTax = amount.sub(taxAmount);
+
+        _transfer(sender, taxCollectorAddress, taxAmount);
+
+        // Transfer amount after tax to recipient
+        _transfer(sender, recipient, amountAfterTax);
+
+        return true;
     }
 
-    function setTaxCollectorAddress(address _taxCollectorAddress) public onlyTaxOffice {
-        require(_taxCollectorAddress != address(0), "tax collector address must be non-zero address");
-        taxCollectorAddress = _taxCollectorAddress;
+    function _transfer(address sender, address recipient, uint256 amount) internal virtual override {
+        require(openTrading || whitelistAddresses[sender], "Trade not opened");
+        super._transfer(sender, recipient, amount);
+    }
+
+    function setTaxRate(uint256 _taxRate) public onlyOperatorOrTaxOffice {
+        require(_taxRate <= 100, "tax equal or bigger to 1%");
+        taxRate = _taxRate;
     }
 
     function excludeAddress(address _address) public onlyOperatorOrTaxOffice returns (bool) {
@@ -113,64 +187,45 @@ contract Current is ERC20Burnable, Operator {
         return true;
     }
 
-    /**
-     * @notice Operator mints CURRENT to a recipient
-     * @param recipient_ The address of recipient
-     * @param amount_ The amount of CURRENT to mint to
-     * @return whether the process has been done
-     */
-    function mint(address recipient_, uint256 amount_) public onlyOperator returns (bool) {
-        uint256 balanceBefore = balanceOf(recipient_);
-        _mint(recipient_, amount_);
-        uint256 balanceAfter = balanceOf(recipient_);
-
-        return balanceAfter > balanceBefore;
+    function setTaxOffice(address _taxOffice) public onlyOperatorOrTaxOffice {
+        require(_taxOffice != address(0), "tax office address cannot be 0 address");
+        taxOffice = _taxOffice;
     }
 
-    function burn(uint256 amount) public override {
-        super.burn(amount);
+    function setTaxCollectorAddress(address _taxCollectorAddress) public onlyTaxOffice {
+        require(_taxCollectorAddress != address(0), "tax collector address must be non-zero address");
+        taxCollectorAddress = _taxCollectorAddress;
     }
 
-    function burnFrom(address account, uint256 amount) public override onlyOperator {
-        super.burnFrom(account, amount);
+    function OpenTrade() external onlyOperatorOrTaxOffice {
+        require(!openTrading, "Trade already opened.");
+        openTrading = true;
     }
 
-    function transferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) public override returns (bool) {
-        uint256 currentTaxRate = 0;
-
-        _transfer(sender, recipient, amount);
-        _approve(sender, _msgSender(), allowance(sender, _msgSender()).sub(amount, "ERC20: transfer amount exceeds allowance"));
+    function includeToWhitelist(address _address) public onlyOperatorOrTaxOffice returns (bool) {
+        require(!whitelistAddresses[_address], "address can't be included");
+        whitelistAddresses[_address] = true;
         return true;
     }
 
-    function distributeInitialOffering(
-        address _offeringContract
-    ) external onlyOperator {
-        require(_offeringContract != address(0), "!_offeringContract");
-        require(!initialOfferingDistributed, "only distribute once");
-
-        _mint(_offeringContract, INITIAL_OFFERING_DISTRIBUTION);
-        initialOfferingDistributed = true;
+    function excludeFromWhitlist(address _address) public onlyOperatorOrTaxOffice returns (bool) {
+        require(whitelistAddresses[_address], "address can't be excluded");
+        whitelistAddresses[_address] = false;
+        return true;
     }
 
     /**
      * @notice distribute to reward pool (only once)
      */
-    function distributeReward(
-        address _genesisPool,
-        address _currentPool,
-        address _offeringContract
-    ) external onlyOperator {
+    function distributeReward(address _farmingIncentiveFund) external onlyOperator {
         require(!rewardPoolDistributed, "only can distribute once");
-        require(_genesisPool != address(0), "!_genesisPool");
-        require(_currentPool != address(0), "!_currentPool");
+        require(_farmingIncentiveFund != address(0), "!_farmingIncentiveFund");
         rewardPoolDistributed = true;
-        _mint(_genesisPool, INITIAL_GENESIS_POOL_DISTRIBUTION);
-        _mint(_currentPool, INITIAL_CURRENT_POOL_DISTRIBUTION);
+        _mint(_farmingIncentiveFund, FARMING_POOL_REWARD_ALLOCATION);
+    }
+
+    function burn(uint256 amount) public override {
+        super.burn(amount);
     }
 
     function governanceRecoverUnsupported(
