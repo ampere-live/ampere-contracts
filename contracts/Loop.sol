@@ -8,7 +8,7 @@ import "./utils/ContractGuard.sol";
 import "./interfaces/IBasisAsset.sol";
 import "./interfaces/ITreasury.sol";
 
-contract AmpWrapper {
+contract CurrentWrapper {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -33,14 +33,14 @@ contract AmpWrapper {
 
     function withdraw(uint256 amount) public virtual {
         uint256 masonShare = _balances[msg.sender];
-        require(masonShare >= amount, "Masonry: withdraw request greater than staked amount");
+        require(masonShare >= amount, "Loop: withdraw request greater than staked amount");
         _totalSupply = _totalSupply.sub(amount);
         _balances[msg.sender] = masonShare.sub(amount);
         current.safeTransfer(msg.sender, amount);
     }
 }
 
-contract Loop is AmpWrapper, ContractGuard {
+contract Loop is CurrentWrapper, ContractGuard {
     using SafeERC20 for IERC20;
     using Address for address;
     using SafeMath for uint256;
