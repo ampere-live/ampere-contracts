@@ -179,8 +179,8 @@ contract Loop is CurrentWrapper, ContractGuard {
         return treasury.nextEpochPoint();
     }
 
-    function getCurrentPrice() external view returns (uint256) {
-        return treasury.getCurrentPrice();
+    function AmpPrice() external view returns (uint256) {
+        return treasury.getAmpPrice();
     }
 
     // =========== Mason getters

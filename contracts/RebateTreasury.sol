@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.7;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-0.8/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-0.8/access/Ownable.sol";
 
 interface IOracle {
     function update() external;
@@ -83,8 +83,8 @@ contract RebateTreasury is Ownable {
         uint256 lastClaimed;
     }
 
-    IERC20 public Current;
-    IOracle public CurrentOracle;
+    IERC20 public Amp;
+    IOracle public AmpOracle;
     ITreasury public Treasury;
 
     mapping (address => Asset) public assets;
@@ -101,7 +101,7 @@ contract RebateTreasury is Ownable {
     uint256 public lastBuyback;
     uint256 public buybackAmount = 10 * 1e4;
 
-    address public constant WFUSE = 0x0BE9e53fd7EDaC9F859882AfdDa116645287C629;
+    address public constant WFTM = 0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83;
     uint256 public constant DENOMINATOR = 1e6;
 
     /*
@@ -125,32 +125,32 @@ contract RebateTreasury is Ownable {
 
     // Initialize parameters
 
-    constructor(address current, address currentOracle, address treasury) {
-        Current = IERC20(current);
-        CurrentOracle = IOracle(currentOracle);
+    constructor(address ampere, address ampereOracle, address treasury) {
+        Amp = IERC20(ampere);
+        AmpOracle = IOracle(ampereOracle);
         Treasury = ITreasury(treasury);
     }
     
-    // Bond asset for discounted Current at bond rate
+    // Bond asset for discounted Amp at bond rate
 
     function bond(address token, uint256 amount) external onlyAsset(token) {
         require(amount > 0, "RebateTreasury: invalid bond amount");
-        uint256 currentAmount = getCurrentReturn(token, amount);
-        require(currentAmount <= Current.balanceOf(address(this)) - totalVested, "RebateTreasury: insufficient current balance");
+        uint256 ampereAmount = getAmpReturn(token, amount);
+        require(ampereAmount <= Amp.balanceOf(address(this)) - totalVested, "RebateTreasury: insufficient ampere balance");
 
         IERC20(token).transferFrom(msg.sender, address(this), amount);
         _claimVested(msg.sender);
 
         VestingSchedule storage schedule = vesting[msg.sender];
-        schedule.amount = schedule.amount - schedule.claimed + currentAmount;
+        schedule.amount = schedule.amount - schedule.claimed + ampereAmount;
         schedule.period = bondVesting;
         schedule.end = block.timestamp + bondVesting;
         schedule.claimed = 0;
         schedule.lastClaimed = block.timestamp;
-        totalVested += currentAmount;
+        totalVested += ampereAmount;
     }
 
-    // Claim available Current rewards from bonding
+    // Claim available Amp rewards from bonding
 
     function claimRewards() external {
         _claimVested(msg.sender);
@@ -162,19 +162,19 @@ contract RebateTreasury is Ownable {
      * --------------------
      */
     
-    // Set Current token
+    // Set Amp token
 
-    function setCurrent(address current) external onlyOwner {
-        Current = IERC20(current);
+    function setAmp(address ampere) external onlyOwner {
+        Amp = IERC20(ampere);
     }
 
-    // Set Current oracle
+    // Set Amp oracle
 
-    function setCurrentOracle(address oracle) external onlyOwner {
-        CurrentOracle = IOracle(oracle);
+    function setAmpOracle(address oracle) external onlyOwner {
+        AmpOracle = IOracle(oracle);
     }
 
-    // Set Current treasury
+    // Set Amp treasury
 
     function setTreasury(address treasury) external onlyOwner {
         Treasury = ITreasury(treasury);
@@ -216,7 +216,7 @@ contract RebateTreasury is Ownable {
     // Redeem assets for buyback under peg
 
     function redeemAssetsForBuyback(address[] calldata tokens) external onlyOwner {
-        require(getCurrentPrice() < 1e18, "RebateTreasury: unable to buy back");
+        require(getAmpPrice() < 1e18, "RebateTreasury: unable to buy back");
         uint256 epoch = Treasury.epoch();
         require(lastBuyback != epoch, "RebateTreasury: already bought back");
         lastBuyback = epoch;
@@ -246,7 +246,7 @@ contract RebateTreasury is Ownable {
         schedule.claimed += claimable;
         schedule.lastClaimed = block.timestamp > schedule.end ? schedule.end : block.timestamp;
         totalVested -= claimable;
-        Current.transfer(account, claimable);
+        Amp.transfer(account, claimable);
     }
 
     /*
@@ -255,35 +255,35 @@ contract RebateTreasury is Ownable {
      * --------------
      */
 
-    // Calculate Current return of bonding amount of token
+    // Calculate Amp return of bonding amount of token
 
-    function getCurrentReturn(address token, uint256 amount) public view onlyAsset(token) returns (uint256) {
-        uint256 currentPrice = getCurrentPrice();
+    function getAmpReturn(address token, uint256 amount) public view onlyAsset(token) returns (uint256) {
+        uint256 amperePrice = getAmpPrice();
         uint256 tokenPrice = getTokenPrice(token);
         uint256 bondPremium = getBondPremium();
-        return amount * tokenPrice * (bondPremium + DENOMINATOR) * assets[token].multiplier / (DENOMINATOR * DENOMINATOR) / currentPrice;
+        return amount * tokenPrice * (bondPremium + DENOMINATOR) * assets[token].multiplier / (DENOMINATOR * DENOMINATOR) / amperePrice;
     }
 
     // Calculate premium for bonds based on bonding curve
 
     function getBondPremium() public view returns (uint256) {
-        uint256 currentPrice = getCurrentPrice();
-        if (currentPrice < 1e18) return 0;
+        uint256 amperePrice = getAmpPrice();
+        if (amperePrice < 1e18) return 0;
 
-        uint256 currentPremium = currentPrice * DENOMINATOR / 1e18 - DENOMINATOR;
-        if (currentPremium < bondThreshold) return 0;
-        if (currentPremium <= secondaryThreshold) {
-            return (currentPremium - bondThreshold) * bondFactor / DENOMINATOR;
+        uint256 amperePremium = amperePrice * DENOMINATOR / 1e18 - DENOMINATOR;
+        if (amperePremium < bondThreshold) return 0;
+        if (amperePremium <= secondaryThreshold) {
+            return (amperePremium - bondThreshold) * bondFactor / DENOMINATOR;
         } else {
             uint256 primaryPremium = (secondaryThreshold - bondThreshold) * bondFactor / DENOMINATOR;
-            return primaryPremium + (currentPremium - secondaryThreshold) * secondaryFactor / DENOMINATOR;
+            return primaryPremium + (amperePremium - secondaryThreshold) * secondaryFactor / DENOMINATOR;
         }
     }
 
     // Get TOMB price from Oracle
 
-    function getCurrentPrice() public view returns (uint256) {
-        return CurrentOracle.consult(address(Current), 1e18);
+    function getAmpPrice() public view returns (uint256) {
+        return AmpOracle.consult(address(Amp), 1e18);
     }
 
     // Get token price from Oracle
@@ -301,7 +301,7 @@ contract RebateTreasury is Ownable {
         address token1 = Pair.token1();
         (uint256 reserve0, uint256 reserve1,) = Pair.getReserves();
 
-        if (token1 == WFUSE) {
+        if (token1 == WFTM) {
             uint256 tokenPrice = Oracle.consult(token0, 1e18);
             return tokenPrice * reserve0 / totalPairSupply +
                    reserve1 * 1e18 / totalPairSupply;
@@ -312,9 +312,9 @@ contract RebateTreasury is Ownable {
         }
     }
 
-    // Get claimable vested Current for account
+    // Get claimable vested Amp for account
 
-    function claimableCurrent(address account) external view returns (uint256) {
+    function claimableAmp(address account) external view returns (uint256) {
         VestingSchedule memory schedule = vesting[account];
         if (block.timestamp <= schedule.lastClaimed || schedule.lastClaimed >= schedule.end) return 0;
         uint256 duration = (block.timestamp > schedule.end ? schedule.end : block.timestamp) - schedule.lastClaimed;
